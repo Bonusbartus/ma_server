@@ -223,7 +223,13 @@ class MusicAssistant:
     diagnostics: DiagnosticsController
     dashboard: DashboardController
 
-    def __init__(self, storage_path: str, cache_path: str, safe_mode: bool = False) -> None:
+    def __init__(
+        self,
+        storage_path: str,
+        cache_path: str,
+        safe_mode: bool = False,
+        analysis_worker: bool = False,
+    ) -> None:
         """Initialize the MusicAssistant Server."""
         self._state = CoreState.STARTING
         self.storage_path = storage_path
@@ -232,6 +238,10 @@ class MusicAssistant:
         # default, which is a RAM-backed tmpfs on HAOS - redirect to the data volume.
         os.environ.setdefault("SQLITE_TMPDIR", storage_path)
         self.safe_mode = safe_mode
+        # Restricts provider loading to ProviderType.AUDIO_ANALYSIS, so this instance can be
+        # pointed at as a remote analysis worker (see helpers/remote_analysis.py) without also
+        # picking up music/player providers via manual setup or mDNS auto-discovery.
+        self.analysis_worker = analysis_worker
         # we dynamically register command handlers which can be consumed by the apis
         self.command_handlers: dict[str, APICommandHandler] = {}
         self._subscribers: set[EventSubscriptionType] = set()
@@ -1207,7 +1217,8 @@ class MusicAssistant:
         Load all builtin providers.
 
         Builtin providers are always needed (also in safe mode) and are fully awaited.
-        On error, setup will fail.
+        On error, setup will fail. In analysis-worker mode, only Audio Analysis providers
+        are considered (see self.analysis_worker).
         """
         # create default config for any 'builtin' providers
         for prov_manifest in self._provider_manifests.values():
@@ -1215,6 +1226,8 @@ class MusicAssistant:
                 # core controllers are not real providers
                 continue
             if not prov_manifest.builtin:
+                continue
+            if self.analysis_worker and prov_manifest.type != ProviderType.AUDIO_ANALYSIS:
                 continue
             await self.config.create_builtin_provider_config(prov_manifest.domain)
 
@@ -1227,6 +1240,7 @@ class MusicAssistant:
             if (manifest := self._provider_manifests.get(prov_conf.domain))
             and manifest.builtin
             and (prov_conf.enabled or manifest.allow_disable is False)
+            and (not self.analysis_worker or manifest.type == ProviderType.AUDIO_ANALYSIS)
         ]
 
         # load builtin providers and wait for them to complete
@@ -1239,45 +1253,48 @@ class MusicAssistant:
         Load regular (non-builtin) providers from config.
 
         Regular providers are loaded in background tasks
-        and can fail without affecting core setup.
+        and can fail without affecting core setup. In analysis-worker mode, only Audio
+        Analysis providers are considered and mDNS-driven default-provider auto-setup is
+        skipped entirely (see self.analysis_worker).
         """
-        # handle default providers setup
-        self.config.set_default(CONF_DEFAULT_PROVIDERS_SETUP, set())
-        default_providers_setup = set(self.config.get(CONF_DEFAULT_PROVIDERS_SETUP))
-        changes_made = False
         newly_created_defaults: set[str] = set()
-        for default_provider, require_mdns in DEFAULT_PROVIDERS:
-            if default_provider in default_providers_setup:
-                # already processed/setup before, skip
-                continue
-            if not (manifest := self._provider_manifests.get(default_provider)):
-                continue
-            if require_mdns:
-                # if mdns discovery is required, check if we have seen any mdns entries
-                # for this provider before setting it up
-                for mdns_name in set(self.discovery.aiozc.zeroconf.cache.cache):
-                    if manifest.mdns_discovery and any(
-                        mdns_type in mdns_name for mdns_type in manifest.mdns_discovery
-                    ):
-                        break
-                else:
+        if not self.analysis_worker:
+            # handle default providers setup
+            self.config.set_default(CONF_DEFAULT_PROVIDERS_SETUP, set())
+            default_providers_setup = set(self.config.get(CONF_DEFAULT_PROVIDERS_SETUP))
+            changes_made = False
+            for default_provider, require_mdns in DEFAULT_PROVIDERS:
+                if default_provider in default_providers_setup:
+                    # already processed/setup before, skip
                     continue
-            await self.config.create_builtin_provider_config(manifest.domain)
-            changes_made = True
-            newly_created_defaults.add(manifest.domain)
-            # TEMP: migration - to be removed after 2.8 release
-            # enable all existing players of the default providers if they are not already enabled
-            # due to the linked protocol feature we introduced
-            for player_config in await self.config.get_player_configs(
-                provider=default_provider, include_disabled=True
-            ):
-                if player_config.enabled:
+                if not (manifest := self._provider_manifests.get(default_provider)):
                     continue
-                await self.config.save_player_config(player_config.player_id, {"enabled": True})
-            default_providers_setup.add(default_provider)
-        if changes_made:
-            self.config.set(CONF_DEFAULT_PROVIDERS_SETUP, default_providers_setup)
-            self.config.save(True)
+                if require_mdns:
+                    # if mdns discovery is required, check if we have seen any mdns entries
+                    # for this provider before setting it up
+                    for mdns_name in set(self.discovery.aiozc.zeroconf.cache.cache):
+                        if manifest.mdns_discovery and any(
+                            mdns_type in mdns_name for mdns_type in manifest.mdns_discovery
+                        ):
+                            break
+                    else:
+                        continue
+                await self.config.create_builtin_provider_config(manifest.domain)
+                changes_made = True
+                newly_created_defaults.add(manifest.domain)
+                # TEMP: migration - to be removed after 2.8 release
+                # enable all existing players of the default providers if they are not already
+                # enabled due to the linked protocol feature we introduced
+                for player_config in await self.config.get_player_configs(
+                    provider=default_provider, include_disabled=True
+                ):
+                    if player_config.enabled:
+                        continue
+                    await self.config.save_player_config(player_config.player_id, {"enabled": True})
+                default_providers_setup.add(default_provider)
+            if changes_made:
+                self.config.set(CONF_DEFAULT_PROVIDERS_SETUP, default_providers_setup)
+                self.config.save(True)
         # load all configured (and enabled) regular (non-builtin) providers
         # (only manifest-related fields are read here, so the option values are not resolved)
         prov_configs = await self.config.get_provider_configs()
@@ -1286,8 +1303,11 @@ class MusicAssistant:
             for prov_conf in prov_configs
             if prov_conf.enabled
             and (
-                not (manifest := self._provider_manifests.get(prov_conf.domain))
-                or not manifest.builtin
+                (manifest := self._provider_manifests.get(prov_conf.domain)) is None
+                or (
+                    not manifest.builtin
+                    and (not self.analysis_worker or manifest.type == ProviderType.AUDIO_ANALYSIS)
+                )
             )
         ]
         # load providers concurrently via tasks, bounded so a host with many providers does

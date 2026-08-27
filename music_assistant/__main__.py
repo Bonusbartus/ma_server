@@ -77,6 +77,13 @@ def get_arguments() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         help="Start in safe mode (core controllers only, no providers)",
     )
+    parser.add_argument(
+        "--analysis-worker",
+        action=argparse.BooleanOptionalAction,
+        help="Restrict provider loading to Audio Analysis providers only, so this instance "
+        "can be pointed at as a remote analysis worker without also acting as a music/player "
+        "server",
+    )
 
     return parser.parse_args()
 
@@ -215,7 +222,14 @@ def _global_loop_exception_handler(_: Any, context: dict[str, Any]) -> None:
     )
 
 
-def main() -> None:
+def _resolve_bool_option(
+    args_value: bool | None, hass_options: dict[str, Any], hass_key: str, env_var: str
+) -> bool:
+    """Resolve a boolean startup flag from the CLI arg, hass add-on options, or an env var."""
+    return bool(args_value or hass_options.get(hass_key) or os.environ.get(env_var))
+
+
+def main() -> None:  # noqa: PLR0915
     """Start MusicAssistant."""
     # parse arguments
     args = get_arguments()
@@ -238,8 +252,9 @@ def main() -> None:
     # prefer value in hass_options
     log_level = hass_options.get("log_level", args.log_level).upper()
     dev_mode = os.environ.get("PYTHONDEVMODE", "0") == "1"
-    safe_mode = bool(
-        args.safe_mode or hass_options.get("safe_mode") or os.environ.get("MASS_SAFE_MODE")
+    safe_mode = _resolve_bool_option(args.safe_mode, hass_options, "safe_mode", "MASS_SAFE_MODE")
+    analysis_worker = _resolve_bool_option(
+        args.analysis_worker, hass_options, "analysis_worker", "MASS_ANALYSIS_WORKER"
     )
 
     # setup logger
@@ -260,7 +275,7 @@ def main() -> None:
         except (ValueError, OSError) as err:
             LOGGER.warning("Could not raise open-file limit: %s", err)
 
-    mass = MusicAssistant(data_dir, cache_dir, safe_mode)
+    mass = MusicAssistant(data_dir, cache_dir, safe_mode, analysis_worker)
 
     # enable alpine subprocess workaround
     _enable_posix_spawn()
