@@ -6,7 +6,7 @@ import numpy as np
 from music_assistant_models.enums import ContentType
 from music_assistant_models.media_items import AudioFormat
 
-from music_assistant.providers.sonic_analysis import _pcm_bytes_to_audio
+from music_assistant.providers.sonic_analysis.provider import _pcm_bytes_to_audio
 
 
 def _af(content_type: ContentType, channels: int = 1) -> AudioFormat:

@@ -12,6 +12,14 @@
       "label": "Email",
       "description": "The email address to authenticate to the remote server."
     },
+    "remote_worker_url": {
+      "label": "Remote worker URL",
+      "description": "WebSocket URL of a Music Assistant analysis worker running this provider, e.g. ws://192.168.1.50:8095/api/audio_analysis/remote (use wss:// when reachable over an untrusted network)."
+    },
+    "remote_worker_token": {
+      "label": "Remote worker token",
+      "description": "Bearer token configured on the remote worker."
+    },
     "max_num_episodes": {
       "label": "Maximum number of episodes (0 for unlimited)",
       "description": "Maximum number of episodes to sync per feed. Use 0 for unlimited"

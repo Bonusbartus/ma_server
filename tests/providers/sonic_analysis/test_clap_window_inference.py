@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import torch
 
-from music_assistant.providers.sonic_analysis import (
+from music_assistant.providers.sonic_analysis.provider import (
     CLAP_WINDOW_SECONDS,
     SonicAnalysisProvider,
     SonicSessionData,

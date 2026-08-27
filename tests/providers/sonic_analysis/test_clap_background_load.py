@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from music_assistant_models.enums import ContentType
-from music_assistant_models.errors import SetupFailedError
 from music_assistant_models.media_items import AudioFormat
 
-from music_assistant.providers.sonic_analysis import (
+from music_assistant.providers.sonic_analysis.provider import (
     CLAP_SAMPLING_FAST,
     SonicAnalysisProvider,
 )
@@ -43,6 +41,7 @@ def _make_provider() -> SonicAnalysisProvider:
     p._clap_model = None
     p._clap_text_embeddings = None
     p._clap_prompt_order = []
+    p._remote_client = None
     p.analysis_version = 1
     return p
 
@@ -71,16 +70,6 @@ def _make_streamdetails(
     sd.provider = "test_provider"
     sd.duration = duration
     return sd
-
-
-@pytest.fixture(autouse=True)
-def _stub_ml_inference_gate() -> Generator[None]:
-    """Stub the hardware gate so these unit tests never spawn the real capability probe."""
-    with patch(
-        "music_assistant.providers.sonic_analysis.verify_system_meets_requirements",
-        new=AsyncMock(),
-    ):
-        yield
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +142,7 @@ async def test_handle_async_init_offloads_load_to_thread() -> None:
     fake_state: tuple[Any, Any, list[Any]] = (MagicMock(), MagicMock(), [])
 
     with patch(
-        "music_assistant.providers.sonic_analysis.asyncio.to_thread",
+        "music_assistant.providers.sonic_analysis.provider.asyncio.to_thread",
         new=AsyncMock(return_value=fake_state),
     ) as to_thread_mock:
         await provider.handle_async_init()
@@ -238,16 +227,19 @@ async def test_start_analysis_returns_false_without_duration(
     assert any("duration missing or zero" in c for c in debug_msgs)
 
 
-async def test_handle_async_init_raises_when_requirements_not_met() -> None:
-    """Setup fails before any model load when the system does not meet requirements."""
-    provider = _make_provider()
-    with (
-        patch(
-            "music_assistant.providers.sonic_analysis.verify_system_meets_requirements",
-            side_effect=SetupFailedError("unsupported system"),
-        ),
-        patch.object(SonicAnalysisProvider, "_load_clap") as load_clap_mock,
-        pytest.raises(SetupFailedError),
+async def test_setup_falls_back_to_remote_only_when_requirements_not_met() -> None:
+    """setup() never imports the heavy provider module on a host that fails the gate."""
+    from music_assistant.providers import sonic_analysis  # noqa: PLC0415
+
+    mass = MagicMock()
+    manifest = MagicMock(domain="sonic_analysis")
+    config = MagicMock()
+    config.get_value = MagicMock(return_value=None)
+
+    with patch(
+        "music_assistant.providers.sonic_analysis.local_ml_analysis_capable",
+        new=AsyncMock(return_value=False),
     ):
-        await provider.handle_async_init()
-    load_clap_mock.assert_not_called()
+        provider = await sonic_analysis.setup(mass, manifest, config)
+
+    assert isinstance(provider, sonic_analysis.SonicAnalysisRemoteOnlyProvider)

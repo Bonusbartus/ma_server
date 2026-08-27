@@ -11,14 +11,14 @@ import pytest
 
 from music_assistant.helpers.datetime import utc
 from music_assistant.models.audio_analysis import AudioAnalysisData, AudioAnalysisError
-from music_assistant.providers.sonic_analysis import (
-    MODEL_FAILURE_RETRY_DELAY,
-    SonicAnalysisProvider,
-    SonicSessionData,
-)
 from music_assistant.providers.sonic_analysis.clap_prompts import (
     CALIBRATION,
     SCALAR_PROMPT_PAIRS,
+)
+from music_assistant.providers.sonic_analysis.provider import (
+    MODEL_FAILURE_RETRY_DELAY,
+    SonicAnalysisProvider,
+    SonicSessionData,
 )
 
 

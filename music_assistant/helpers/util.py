@@ -462,6 +462,35 @@ async def verify_cpu_supports_ml_inference() -> None:
     )
 
 
+async def cpu_supports_ml_inference() -> bool:
+    """
+    Return whether the CPU can run on-device ML (torch) inference, without raising.
+
+    A non-raising companion to verify_cpu_supports_ml_inference(), for callers that need to
+    branch on the result (e.g. offering a remote-worker-only config) rather than fail setup.
+    """
+    try:
+        await verify_cpu_supports_ml_inference()
+    except UnsupportedSystemError:
+        return False
+    return True
+
+
+async def local_ml_analysis_capable(*, min_memory_gb: float = 0.0, min_cpu_cores: int = 0) -> bool:
+    """
+    Return whether this host can run on-device ML audio analysis, without raising.
+
+    Combines the non-raising RAM/CPU-core check with the non-raising ML-inference (AVX2)
+    probe, so a provider's setup() can decide once whether to offer local execution at all.
+
+    :param min_memory_gb: Minimum total system RAM in GB (0 disables the check).
+    :param min_cpu_cores: Minimum CPU core count (0 disables the check).
+    """
+    if not system_meets_requirements(min_memory_gb=min_memory_gb, min_cpu_cores=min_cpu_cores):
+        return False
+    return await cpu_supports_ml_inference()
+
+
 async def _run_ml_inference_probe() -> int | None:
     """
     Run the inference probe subprocess and return its exit code.

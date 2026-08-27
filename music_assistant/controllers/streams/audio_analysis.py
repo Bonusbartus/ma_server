@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import AsyncGenerator, Iterable, Mapping
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from math import isfinite
 from typing import TYPE_CHECKING, Any
@@ -23,6 +23,8 @@ from music_assistant_models.media_items import AudioMetadata
 
 from music_assistant.constants import (
     CONF_BACKGROUND_SCAN_CONCURRENCY,
+    CONF_ENABLE_REMOTE_ANALYSIS_API,
+    CONF_REMOTE_ANALYSIS_API_TOKEN,
     DB_TABLE_AUDIO_ANALYSIS,
     DB_TABLE_AUDIO_ANALYSIS_FAILURES,
     DB_TABLE_PROVIDER_MAPPINGS,
@@ -34,6 +36,10 @@ from music_assistant.controllers.streams.audio_buffer import AudioBufferDiscarde
 from music_assistant.helpers.api import api_command
 from music_assistant.helpers.datetime import local_clock_time_to_utc, utc_timestamp
 from music_assistant.helpers.json import json_dumps, json_loads
+from music_assistant.helpers.remote_analysis import (
+    REMOTE_ANALYSIS_BRIDGE_PATH,
+    create_remote_analysis_handler,
+)
 from music_assistant.helpers.util import inference_thread_budget, is_arm
 from music_assistant.models.audio_analysis import AudioAnalysisData
 from music_assistant.models.audio_analysis_provider import (
@@ -88,6 +94,7 @@ LOGGER = logging.getLogger(f"{MASS_LOGGER_NAME}.audio_analysis")
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from music_assistant_models.config_entries import CoreConfig
     from music_assistant_models.media_items import AudioFormat, Track
     from music_assistant_models.streamdetails import StreamDetails
 
@@ -240,9 +247,11 @@ class AudioAnalysisController:
         self._idle_unload_task: asyncio.Task[None] | None = None
         # In-flight provider finalizes: their session is already gone, but the models are not.
         self._finalize_tasks: set[asyncio.Task[None]] = set()
+        # Unregister callback for the remote-analysis bridge route, when enabled.
+        self._remote_bridge_unregister: Callable[[], None] | None = None
 
-    def setup(self) -> None:
-        """Register the nightly background scan task."""
+    def setup(self, config: CoreConfig) -> None:
+        """Register the nightly background scan task and the remote-analysis bridge (if enabled)."""
         utc_hour, utc_minute = local_clock_time_to_utc(0, 0)
         self.mass.tasks.register_scheduled_task(
             task_id=BACKGROUND_SCAN_TASK_ID,
@@ -252,9 +261,25 @@ class AudioAnalysisController:
             metadata={"task_domain": "audio_analysis"},
             allow_retry=True,
         )
+        if not config.get_value(CONF_ENABLE_REMOTE_ANALYSIS_API):
+            return
+        token = str(config.get_value(CONF_REMOTE_ANALYSIS_API_TOKEN) or "")
+        if not token:
+            self.logger.warning(
+                "Remote analysis API is enabled but no token is configured; refusing to "
+                "expose it without authentication"
+            )
+            return
+        handler = create_remote_analysis_handler(self.mass, token=token)
+        self._remote_bridge_unregister = self.mass.webserver.register_dynamic_route(
+            REMOTE_ANALYSIS_BRIDGE_PATH, handler, method="GET"
+        )
 
     async def close(self) -> None:
         """Drain in-flight sessions and chunk workers on shutdown."""
+        if self._remote_bridge_unregister is not None:
+            self._remote_bridge_unregister()
+            self._remote_bridge_unregister = None
         tasks = list(self._workers.values())
         self._workers.clear()
         if self._idle_unload_task is not None:

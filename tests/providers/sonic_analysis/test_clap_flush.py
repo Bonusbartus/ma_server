@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 
-from music_assistant.providers.sonic_analysis import (
+from music_assistant.providers.sonic_analysis.provider import (
     CLAP_WINDOW_SECONDS,
     SonicAnalysisProvider,
     SonicSessionData,

@@ -10,8 +10,8 @@ import pytest
 from music_assistant_models.enums import ContentType, MediaType
 from music_assistant_models.media_items import AudioFormat
 
-import music_assistant.providers.sonic_analysis as sonic_mod
-from music_assistant.providers.sonic_analysis import (
+import music_assistant.providers.sonic_analysis.provider as sonic_mod
+from music_assistant.providers.sonic_analysis.provider import (
     ANALYSIS_SAMPLE_RATE,
     SonicAnalysisProvider,
 )
@@ -107,7 +107,9 @@ def test_decode_resample_extract_is_callable() -> None:
 
 def test_decode_resample_extract_returns_three_tuple() -> None:
     """_decode_resample_extract must return (pre_resample, post_resample, BlockFeatures|None)."""
-    from music_assistant.providers.sonic_analysis import _decode_resample_extract  # noqa: PLC0415
+    from music_assistant.providers.sonic_analysis.provider import (  # noqa: PLC0415
+        _decode_resample_extract,
+    )
 
     n_samples = ANALYSIS_SAMPLE_RATE * 10
     audio_f32 = np.zeros(n_samples, dtype=np.float32)

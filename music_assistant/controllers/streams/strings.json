@@ -36,6 +36,14 @@
     "background_scan_concurrency": {
       "label": "Background analysis concurrency",
       "description": "Maximum number of tracks analyzed concurrently during the nightly background scan (1-16). Defaults to 1, or 2 on machines with 4 or more cores. Raise it for faster overnight scans at the cost of more CPU; analysis still never uses more than half the cores."
+    },
+    "enable_remote_analysis_api": {
+      "label": "Allow remote analysis workers to use this server",
+      "description": "Allow a remote-capable Audio Analysis provider (e.g. Smart Fades, Sonic Analysis) running elsewhere on your network to offload its analysis to this server. Requires a token below."
+    },
+    "remote_analysis_api_token": {
+      "label": "Remote analysis API token",
+      "description": "Bearer token remote providers must present to use this server as their analysis worker."
     }
   },
   "manifest": {

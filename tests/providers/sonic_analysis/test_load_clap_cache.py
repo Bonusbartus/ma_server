@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from music_assistant.providers.sonic_analysis import SonicAnalysisProvider
+from music_assistant.providers.sonic_analysis.provider import SonicAnalysisProvider
 
 
 def _make_provider() -> tuple[SonicAnalysisProvider, MagicMock]:
@@ -25,11 +25,11 @@ def test_returns_embeddings_when_hash_matches() -> None:
 
     with (
         patch(
-            "music_assistant.providers.sonic_analysis.load_precomputed_prompt_embeddings",
+            "music_assistant.providers.sonic_analysis.provider.load_precomputed_prompt_embeddings",
             return_value=(fake_emb, fake_hash),
         ),
         patch(
-            "music_assistant.providers.sonic_analysis.hash_scalar_prompt_pairs",
+            "music_assistant.providers.sonic_analysis.provider.hash_scalar_prompt_pairs",
             return_value=fake_hash,
         ),
     ):
@@ -46,11 +46,11 @@ def test_returns_none_when_hash_drifts() -> None:
 
     with (
         patch(
-            "music_assistant.providers.sonic_analysis.load_precomputed_prompt_embeddings",
+            "music_assistant.providers.sonic_analysis.provider.load_precomputed_prompt_embeddings",
             return_value=(fake_emb, "stale_hash"),
         ),
         patch(
-            "music_assistant.providers.sonic_analysis.hash_scalar_prompt_pairs",
+            "music_assistant.providers.sonic_analysis.provider.hash_scalar_prompt_pairs",
             return_value="fresh_hash",
         ),
     ):
@@ -65,7 +65,7 @@ def test_returns_none_when_cache_file_missing() -> None:
     p, fake_logger = _make_provider()
 
     with patch(
-        "music_assistant.providers.sonic_analysis.load_precomputed_prompt_embeddings",
+        "music_assistant.providers.sonic_analysis.provider.load_precomputed_prompt_embeddings",
         side_effect=FileNotFoundError("no cache file"),
     ):
         result = p._try_load_cached_prompt_embeddings()

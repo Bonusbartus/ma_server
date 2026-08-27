@@ -10,13 +10,13 @@ import soxr
 from music_assistant_models.enums import ContentType, MediaType
 from music_assistant_models.media_items import AudioFormat
 
-import music_assistant.providers.sonic_analysis as sonic_mod
-from music_assistant.providers.sonic_analysis import (
+import music_assistant.providers.sonic_analysis.provider as sonic_mod
+from music_assistant.providers.sonic_analysis.helpers import extract_block_features as _real_extract
+from music_assistant.providers.sonic_analysis.provider import (
     ANALYSIS_SAMPLE_RATE,
     SonicAnalysisProvider,
     SonicSessionData,
 )
-from music_assistant.providers.sonic_analysis.helpers import extract_block_features as _real_extract
 
 
 def _make_provider() -> SonicAnalysisProvider:

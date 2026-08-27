@@ -17,11 +17,14 @@ import pytest
 import torch
 from beat_this.inference import Spect2Frames
 from music_assistant_models.enums import ContentType, MediaType
-from music_assistant_models.errors import SetupFailedError
 from music_assistant_models.media_items import AudioFormat
 from torchaudio.transforms import SpectralCentroid
 
 from music_assistant.models.audio_analysis import AudioAnalysisData, AudioAnalysisError
+from music_assistant.providers.smart_fades._shared import (
+    CONF_REMOTE_WORKER_TOKEN,
+    CONF_REMOTE_WORKER_URL,
+)
 from music_assistant.providers.smart_fades.dbn_postprocessor import DBNDownBeatTracker
 from music_assistant.providers.smart_fades.provider import (
     ANALYSIS_SAMPLE_RATE,
@@ -117,12 +120,16 @@ def manifest_mock() -> Mock:
 
 @pytest.fixture
 def config_mock() -> Mock:
-    """Return a mock provider config."""
+    """Return a mock provider config; no remote worker configured (runs locally)."""
     config = Mock()
     config.instance_id = "smart_fades_test"
     config.name = "Smart Fades Test"
     config.enabled = True
-    config.get_value = Mock(return_value="GLOBAL")
+    config.get_value = Mock(
+        side_effect=lambda key: (
+            None if key in (CONF_REMOTE_WORKER_URL, CONF_REMOTE_WORKER_TOKEN) else "GLOBAL"
+        )
+    )
     config.values = {}
     return config
 
@@ -441,20 +448,32 @@ async def test_digital_silence_yields_finite_spectral_centroid(
     assert np.isfinite(np.concatenate(data.centroid_chunks)).all()
 
 
-async def test_setup_raises_when_requirements_not_met(
+async def test_setup_falls_back_to_remote_only_when_requirements_not_met(
     mass_mock: Mock, manifest_mock: Mock, config_mock: Mock
 ) -> None:
-    """setup() fails (before importing the heavy provider module) when requirements aren't met."""
+    """setup() falls back to the remote-only provider when the hardware gate fails."""
     from music_assistant.providers import smart_fades  # noqa: PLC0415
 
-    with (
-        patch(
-            "music_assistant.providers.smart_fades.verify_system_meets_requirements",
-            side_effect=SetupFailedError("unsupported system"),
-        ),
-        pytest.raises(SetupFailedError),
+    with patch(
+        "music_assistant.providers.smart_fades.local_ml_analysis_capable",
+        new=AsyncMock(return_value=False),
     ):
-        await smart_fades.setup(mass_mock, manifest_mock, config_mock)
+        provider = await smart_fades.setup(mass_mock, manifest_mock, config_mock)
+
+    assert isinstance(provider, smart_fades.SmartFadesRemoteOnlyProvider)
+
+
+async def test_remote_only_provider_requires_worker_config() -> None:
+    """The remote-only fallback shows the remote-worker fields as required."""
+    from music_assistant.providers import smart_fades  # noqa: PLC0415
+
+    config = Mock()
+    config.get_value = Mock(return_value=None)
+    provider = smart_fades.SmartFadesRemoteOnlyProvider(
+        Mock(), Mock(domain="smart_fades"), config, set()
+    )
+    entries = await provider.get_config_entries()
+    assert all(entry.required for entry in entries)
 
 
 def test_initialize_models_uses_expected_components(provider: SmartFadesProvider) -> None:

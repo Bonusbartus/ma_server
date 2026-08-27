@@ -18,13 +18,18 @@ from torchaudio.transforms import SpectralCentroid
 
 from music_assistant.constants import VERBOSE_LOG_LEVEL
 from music_assistant.helpers.datetime import utc
+from music_assistant.helpers.remote_analysis import RemoteAnalysisClient
 from music_assistant.helpers.util import is_arm, system_meets_requirements
 from music_assistant.models.audio_analysis import AudioAnalysisData, AudioAnalysisError
-from music_assistant.models.audio_analysis_provider import (
-    ACCUMULATING_ANALYSIS_MAX_DURATION_SECONDS,
-    AudioAnalysisProvider,
-)
+from music_assistant.models.audio_analysis_provider import AudioAnalysisProvider
 
+from ._shared import (
+    ANALYSIS_VERSION,
+    CONF_REMOTE_WORKER_TOKEN,
+    CONF_REMOTE_WORKER_URL,
+    MAX_ANALYSIS_DURATION,
+    remote_worker_config_entries,
+)
 from .dbn_postprocessor import DBNDownBeatTracker
 from .feature_extractor import AdvancedBeatFeatureExtractor
 from .helpers import (
@@ -115,10 +120,12 @@ class LoadedModels:
 class SmartFadesProvider(AudioAnalysisProvider):
     """Smart fades audio analysis provider using Beat This for beat tracking."""
 
-    max_analysis_duration = ACCUMULATING_ANALYSIS_MAX_DURATION_SECONDS
-    # v3: FireRed AED vocal activity
-    analysis_version = 3
+    max_analysis_duration = MAX_ANALYSIS_DURATION
+    analysis_version = ANALYSIS_VERSION
     has_unloadable_models = True
+    # Class-level default so instances built via __new__() (bypassing __init__ in unit
+    # tests) still see None rather than raising AttributeError.
+    _remote_client: RemoteAnalysisClient | None = None
 
     def __init__(
         self,
@@ -134,6 +141,19 @@ class SmartFadesProvider(AudioAnalysisProvider):
         # Populated by _load_models and cleared again by _free_models, so every use goes
         # through _require_models rather than assuming the models are resident.
         self._models: LoadedModels | None = None
+        # Set when the user points this (hardware-capable) instance at a remote worker
+        # instead of running locally; all four session hooks then forward to it.
+        self._remote_client: RemoteAnalysisClient | None = None
+        worker_url = str(config.get_value(CONF_REMOTE_WORKER_URL) or "")
+        worker_token = str(config.get_value(CONF_REMOTE_WORKER_TOKEN) or "")
+        if worker_url and worker_token:
+            self._remote_client = RemoteAnalysisClient(
+                mass=mass,
+                url=worker_url,
+                token=worker_token,
+                domain=self.domain,
+                logger=self.logger,
+            )
 
     async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
         """Return config entries for this provider."""
@@ -147,10 +167,14 @@ class SmartFadesProvider(AudioAnalysisProvider):
                     min_cpu_cores=RECOMMENDED_CPU_CORES,
                 ),
             ),
+            *remote_worker_config_entries(required=False),
         )
 
     async def handle_async_init(self) -> None:
         """Handle async initialization of the provider; idle models are reloaded on demand."""
+        if self._remote_client is not None:
+            # Analysis runs on the configured worker; no local models to load.
+            return
         # Configure the inference runtime before loading any model (see the controller method).
         self.mass.streams.audio_analysis.ensure_inference_runtime_configured()
         await self._load_models()
@@ -162,6 +186,9 @@ class SmartFadesProvider(AudioAnalysisProvider):
         pcm_chunk: bytes,
     ) -> None:
         """Process a PCM chunk for beat tracking."""
+        if self._remote_client is not None:
+            await self._remote_client.send_chunk(session_id, pcm_chunk)
+            return
         data = self._data.get(session_id)
         if not data:
             return
@@ -190,10 +217,18 @@ class SmartFadesProvider(AudioAnalysisProvider):
 
     async def cancel(self, session_id: str) -> None:
         """Cancel a beat tracking session."""
+        if self._remote_client is not None:
+            await self._remote_client.cancel(session_id)
         data = self._data.pop(session_id, None)
         if data:
             self._clear_session_data(data)
         await super().cancel(session_id)
+
+    async def unload(self, is_removed: bool = False) -> None:
+        """Handle unload, closing the remote worker connection if one was opened."""
+        if self._remote_client is not None:
+            await self._remote_client.close()
+        await super().unload(is_removed)
 
     async def _load_models(self) -> None:
         """Load the Beat This, S-KEY, and FireRed AED models into memory."""
@@ -258,6 +293,9 @@ class SmartFadesProvider(AudioAnalysisProvider):
             # We only want to analyze tracks
             return False
 
+        if self._remote_client is not None:
+            return await self._remote_client.start(session_id, streamdetails, audio_format)
+
         models = self._require_models()
         block_seconds = 10.0
 
@@ -298,6 +336,9 @@ class SmartFadesProvider(AudioAnalysisProvider):
 
     async def _finalize(self, session_id: str) -> AudioAnalysisData | None:
         """Finalize beat tracking and store results."""
+        if self._remote_client is not None:
+            return await self._remote_client.finalize(session_id)
+
         data = self._data.pop(session_id, None)
         if not data:
             return None

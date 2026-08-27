@@ -14,8 +14,11 @@ from music_assistant_models.enums import ContentType, MediaType
 from music_assistant_models.media_items import AudioFormat
 
 from music_assistant.models.audio_analysis import AudioAnalysisData, AudioAnalysisError
-from music_assistant.providers.sonic_analysis import SonicAnalysisProvider, SonicSessionData
 from music_assistant.providers.sonic_analysis.clap_prompts import SCALAR_PROMPT_PAIRS
+from music_assistant.providers.sonic_analysis.provider import (
+    SonicAnalysisProvider,
+    SonicSessionData,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers

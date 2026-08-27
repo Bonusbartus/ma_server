@@ -44,6 +44,7 @@ from music_assistant.constants import (
     CONF_BIND_PORT,
     CONF_CROSSFADE_DURATION,
     CONF_CROSSFADE_MODE,
+    CONF_ENABLE_REMOTE_ANALYSIS_API,
     CONF_ENTRY_ENABLE_ICY_METADATA,
     CONF_ENTRY_LOG_LEVEL,
     CONF_ENTRY_VOLUME_NORMALIZATION_TARGET,
@@ -52,6 +53,7 @@ from music_assistant.constants import (
     CONF_PLAYER_QUEUES,
     CONF_PREFER_WAV_FOR_LIVE_SOURCES,
     CONF_PUBLISH_IP,
+    CONF_REMOTE_ANALYSIS_API_TOKEN,
     CONF_VALUE_AUTO,
     CONF_VOLUME_NORMALIZATION_FIXED_GAIN_RADIO,
     CONF_VOLUME_NORMALIZATION_FIXED_GAIN_TRACKS,
@@ -470,13 +472,27 @@ class StreamsController(CoreController):
                 default_value=DEFAULT_BACKGROUND_SCAN_CONCURRENCY,
                 category="audio_analysis",
             ),
+            ConfigEntry(
+                key=CONF_ENABLE_REMOTE_ANALYSIS_API,
+                type=ConfigEntryType.BOOLEAN,
+                default_value=False,
+                category="audio_analysis",
+                advanced=True,
+            ),
+            ConfigEntry(
+                key=CONF_REMOTE_ANALYSIS_API_TOKEN,
+                type=ConfigEntryType.SECURE_STRING,
+                required=False,
+                category="audio_analysis",
+                advanced=True,
+            ),
         )
 
     async def setup(self, config: CoreConfig) -> None:
         """Async initialize of module."""
         # initialize the audio sub-controller (needs mass.streams to be set)
         self.audio.setup()
-        self._audio_analysis.setup()
+        self._audio_analysis.setup(config)
         # copy log level to audio/ffmpeg loggers
         self.audio.logger.setLevel(self.logger.level)
         FFMPEG_LOGGER.setLevel(self.logger.level)

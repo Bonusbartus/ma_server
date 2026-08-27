@@ -605,6 +605,51 @@ async def test_verify_cpu_supports_ml_inference_arm() -> None:
 @pytest.mark.parametrize(
     ("returncode", "expected"),
     [
+        (_ml_inference_probe.PROBE_CAPABLE, True),
+        (_ml_inference_probe.PROBE_NO_AVX2, False),
+        (-signal.SIGILL, False),
+    ],
+)
+async def test_cpu_supports_ml_inference(returncode: int, expected: bool) -> None:
+    """The non-raising probe wrapper mirrors verify_cpu_supports_ml_inference's verdict."""
+    with (
+        patch("music_assistant.helpers.util.platform.machine", return_value="x86_64"),
+        patch(
+            "music_assistant.helpers.util._run_ml_inference_probe",
+            AsyncMock(return_value=returncode),
+        ),
+    ):
+        assert await util.cpu_supports_ml_inference() is expected
+
+
+@pytest.mark.parametrize(
+    ("cpu_cores", "total_gb", "ml_capable", "expected"),
+    [
+        (4, 8.0, True, True),
+        (1, 8.0, True, False),  # fails the CPU-core check
+        (4, 1.0, True, False),  # fails the RAM check
+        (4, 8.0, False, False),  # RAM/CPU pass but the ML-inference probe rejects
+    ],
+)
+async def test_local_ml_analysis_capable(
+    cpu_cores: int, total_gb: float, ml_capable: bool, expected: bool
+) -> None:
+    """local_ml_analysis_capable() combines the RAM/CPU and ML-inference checks, non-raising."""
+    with (
+        patch("music_assistant.helpers.util.os.process_cpu_count", return_value=cpu_cores),
+        patch("music_assistant.helpers.util.get_total_system_memory", return_value=total_gb),
+        patch(
+            "music_assistant.helpers.util.cpu_supports_ml_inference",
+            AsyncMock(return_value=ml_capable),
+        ),
+    ):
+        result = await util.local_ml_analysis_capable(min_memory_gb=4.0, min_cpu_cores=2)
+    assert result is expected
+
+
+@pytest.mark.parametrize(
+    ("returncode", "expected"),
+    [
         (-signal.SIGILL, -signal.SIGILL),
         (0, 0),
     ],

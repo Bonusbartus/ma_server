@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from music_assistant.providers.sonic_analysis import (
+from music_assistant.providers.sonic_analysis.provider import (
     CLAP_SKIP_SECONDS,
     CLAP_WINDOW_SECONDS,
     compute_clap_target_starts,
