@@ -19,7 +19,7 @@ from music_assistant_models.auth import Scope
 from music_assistant_models.background_task import TaskSchedule
 from music_assistant_models.enums import ContentType, MediaType, ProviderType, StreamType
 from music_assistant_models.errors import ProviderUnavailableError
-from music_assistant_models.media_items import AudioMetadata
+from music_assistant_models.media_items import AudioFormat, AudioMetadata
 
 from music_assistant.constants import (
     CONF_BACKGROUND_SCAN_CONCURRENCY,
@@ -95,7 +95,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from music_assistant_models.config_entries import CoreConfig
-    from music_assistant_models.media_items import AudioFormat, Track
+    from music_assistant_models.media_items import Track
     from music_assistant_models.streamdetails import StreamDetails
 
     from music_assistant.controllers.streams.audio_buffer import AudioBuffer
@@ -1156,10 +1156,14 @@ class AudioAnalysisController:
         if not isinstance(streamdetails.path, str) or not streamdetails.path:
             return
 
-        # Override content_type so ffmpeg decodes rather than re-muxing the source codec.
-        pcm_format = dataclasses.replace(
-            streamdetails.audio_format,
-            content_type=ContentType.from_bit_depth(streamdetails.audio_format.bit_depth),
+        # A fresh AudioFormat, not a replace() of the source: carrying the source codec_type
+        # into a PCM format makes ffmpeg decode the raw PCM with that codec.
+        source_format = streamdetails.audio_format
+        pcm_format = AudioFormat(
+            content_type=ContentType.from_bit_depth(source_format.bit_depth),
+            sample_rate=source_format.sample_rate,
+            bit_depth=source_format.bit_depth,
+            channels=source_format.channels,
         )
 
         accepted = await self._start_analysis_on_providers(

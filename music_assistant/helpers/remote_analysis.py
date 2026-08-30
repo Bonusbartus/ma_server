@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -28,6 +29,7 @@ from music_assistant_models.enums import ConfigEntryType
 from music_assistant_models.media_items import AudioFormat
 from music_assistant_models.streamdetails import StreamDetails
 
+from music_assistant.helpers.datetime import utc
 from music_assistant.helpers.json import json_dumps, json_loads
 from music_assistant.models.audio_analysis import AudioAnalysisData, AudioAnalysisError
 from music_assistant.models.audio_analysis_provider import AudioAnalysisProvider
@@ -48,6 +50,9 @@ _RECONNECT_MAX_DELAY = 30.0
 # How long to wait for a control-message reply (start_ack/chunk_ack/result) before treating
 # the worker as unresponsive. Generous: a busy worker may queue behind other sessions.
 _REPLY_TIMEOUT = 120.0
+# A worker that is down or misconfigured says nothing about the track, so failures from it
+# carry a retry instead of blocking the track from ever being analyzed again.
+_WORKER_FAILURE_RETRY_DELAY = timedelta(hours=1)
 
 CONF_REMOTE_WORKER_URL = "remote_worker_url"
 CONF_REMOTE_WORKER_TOKEN = "remote_worker_token"
@@ -220,13 +225,28 @@ class RemoteAnalysisClient:
                     headers={"Authorization": f"Bearer {self.token}"},
                     heartbeat=30,
                 )
+            except aiohttp.WSServerHandshakeError as err:
+                # The worker answered but refused the upgrade: a misconfiguration that
+                # retrying cannot resolve, so fail immediately instead of stalling every
+                # session behind the full backoff ladder.
+                hint = (
+                    " (enable the remote analysis API and set its token on the worker)"
+                    if err.status == 404
+                    else ""
+                )
+                raise AudioAnalysisError(
+                    f"remote analysis worker at {self.url} rejected the connection "
+                    f"(HTTP {err.status}){hint}",
+                    retry_at=utc() + _WORKER_FAILURE_RETRY_DELAY,
+                ) from err
             except Exception as err:
                 self.logger.warning(
                     "Could not connect to remote analysis worker at %s: %s", self.url, err
                 )
                 if delay >= _RECONNECT_MAX_DELAY:
                     raise AudioAnalysisError(
-                        f"remote analysis worker at {self.url} is unreachable"
+                        f"remote analysis worker at {self.url} is unreachable",
+                        retry_at=utc() + _WORKER_FAILURE_RETRY_DELAY,
                     ) from err
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _RECONNECT_MAX_DELAY)

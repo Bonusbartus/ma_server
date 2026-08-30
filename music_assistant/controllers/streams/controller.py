@@ -478,6 +478,7 @@ class StreamsController(CoreController):
                 default_value=False,
                 category="audio_analysis",
                 advanced=True,
+                requires_reload=True,
             ),
             ConfigEntry(
                 key=CONF_REMOTE_ANALYSIS_API_TOKEN,
@@ -485,6 +486,7 @@ class StreamsController(CoreController):
                 required=False,
                 category="audio_analysis",
                 advanced=True,
+                requires_reload=True,
             ),
         )
 
